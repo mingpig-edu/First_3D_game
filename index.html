@@ -3,13 +3,18 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>我的第一個 3D 手機小遊戲</title>
+  <title>3D 跑酷冒險</title>
   <style>
-    body { margin: 0; overflow: hidden; background: #1a1a2e; touch-action: manipulation; }
-    #ui { position: absolute; top: 20px; width: 100%; text-align: center; color: white; font-family: sans-serif; font-size: 20px; pointer-events: none; }
+    body { margin: 0; overflow: hidden; background: #0f172a; touch-action: manipulation; font-family: sans-serif; }
+    #ui { position: absolute; top: 15px; left: 0; width: 100%; text-align: center; color: white; pointer-events: none; z-index: 10; }
+    .score-box { font-size: 22px; font-weight: bold; text-shadow: 0 2px 4px rgba(0,0,0,0.5); }
+    
+    /* 手機虛擬按鈕 */
+    #controls { position: absolute; bottom: 25px; left: 0; width: 100%; display: flex; justify-content: space-evenly; padding: 0 10px; box-sizing: border-box; z-index: 10; }
+    .btn { background: rgba(255, 255, 255, 0.25); border: 2px solid rgba(255, 255, 255, 0.5); color: white; padding: 16px 24px; border-radius: 50px; font-size: 20px; font-weight: bold; user-select: none; outline: none; }
+    .btn:active { background: rgba(255, 255, 255, 0.6); transform: scale(0.95); }
   </style>
 
-  <!-- 用 Import Map 讓瀏覽器直接從 CDN 載入 Three.js，完全不需要 npm -->
   <script type="importmap">
     {
       "imports": {
@@ -19,16 +24,28 @@
   </script>
 </head>
 <body>
-  <div id="ui">得分: <span id="score">0</span><br><small style="font-size:14px; color:#aaa;">點擊螢幕跳躍躲避方塊</small></div>
+  <div id="ui">
+    <div class="score-box">得分: <span id="score">0</span> | 金幣: <span id="coins">0</span></div>
+  </div>
+
+  <!-- 手機控制按鈕 -->
+  <div id="controls">
+    <button class="btn" id="btn-left">⬅️</button>
+    <button class="btn" id="btn-jump">⬆️ 跳躍</button>
+    <button class="btn" id="btn-right">➡️</button>
+  </div>
 
   <script type="module">
     import * as THREE from 'three';
 
-    // 1. 建立場景與相機
+    // 1. 場景設定
     const scene = new THREE.Scene();
-    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(0, 3, 5);
-    camera.lookAt(0, 0, 0);
+    scene.background = new THREE.Color(0x0f172a);
+    scene.fog = new THREE.Fog(0x0f172a, 10, 30); // 霧化效果增強 3D 深度感
+
+    const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, 4, 8);
+    camera.lookAt(0, 1, 0);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -36,90 +53,152 @@
 
     // 2. 光源
     const light = new THREE.DirectionalLight(0xffffff, 1.5);
-    light.position.set(2, 5, 3);
+    light.position.set(5, 10, 5);
     scene.add(light);
-    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+    scene.add(new THREE.AmbientLight(0xffffff, 0.6));
 
-    // 3. 地板
+    // 3. 跑道 (三個跑道 X 軸分別為 -2.5, 0, 2.5)
+    const LANES = [-2.5, 0, 2.5];
+    let currentLane = 1; // 預設在中間跑道
+
     const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(10, 30),
-      new THREE.MeshStandardMaterial({ color: 0x16213e })
+      new THREE.PlaneGeometry(10, 50),
+      new THREE.MeshStandardMaterial({ color: 0x1e293b, roughness: 0.8 })
     );
     floor.rotation.x = -Math.PI / 2;
+    floor.position.z = -10;
     scene.add(floor);
 
-    // 4. 玩家方塊 (紅色)
+    // 4. 玩家
     const player = new THREE.Mesh(
       new THREE.BoxGeometry(1, 1, 1),
-      new THREE.MeshStandardMaterial({ color: 0xe94560 })
+      new THREE.MeshStandardMaterial({ color: 0x38bdf8 })
     );
-    player.position.set(0, 0.5, 1);
+    player.position.set(LANES[currentLane], 0.5, 3);
     scene.add(player);
 
-    // 5. 障礙物方塊 (藍色)
-    const obstacle = new THREE.Mesh(
-      new THREE.BoxGeometry(1, 1, 1),
-      new THREE.MeshStandardMaterial({ color: 0x0f3460 })
-    );
-    obstacle.position.set(0, 0.5, -15);
-    scene.add(obstacle);
+    // 5. 動態生成障礙物與金幣
+    const obstacles = [];
+    const coins = [];
 
-    // 遊戲狀態與變數
+    function spawnEntity() {
+      const lane = LANES[Math.floor(Math.random() * 3)];
+      const isCoin = Math.random() > 0.5;
+
+      if (isCoin) {
+        // 生成金幣
+        const coin = new THREE.Mesh(
+          new THREE.OctahedronGeometry(0.4),
+          new THREE.MeshStandardMaterial({ color: 0xfacc15, metalness: 0.8 })
+        );
+        coin.position.set(lane, 0.6, -25);
+        scene.add(coin);
+        coins.push(coin);
+      } else {
+        // 生成障礙物
+        const obstacle = new THREE.Mesh(
+          new THREE.BoxGeometry(1.2, 1.2, 1.2),
+          new THREE.MeshStandardMaterial({ color: 0xf43f5e })
+        );
+        obstacle.position.set(lane, 0.6, -25);
+        scene.add(obstacle);
+        obstacles.push(obstacle);
+      }
+    }
+
+    // 每 1.2 秒生成一個物件
+    setInterval(spawnEntity, 1200);
+
+    // 遊戲狀態
     let isJumping = false;
     let jumpVelocity = 0;
     let score = 0;
+    let coinCount = 0;
     let isGameOver = false;
 
-    // 點擊觸發跳躍
-    window.addEventListener('pointerdown', () => {
-      if (isGameOver) {
-        // 重新開始
-        obstacle.position.z = -15;
-        score = 0;
-        document.getElementById('score').innerText = score;
-        isGameOver = false;
-        return;
-      }
+    // 6. 操作邏輯
+    function moveLeft() {
+      if (currentLane > 0) currentLane--;
+    }
+    function moveRight() {
+      if (currentLane < 2) currentLane++;
+    }
+    function jump() {
       if (!isJumping) {
         isJumping = true;
-        jumpVelocity = 0.18; // 跳躍初始速度
+        jumpVelocity = 0.22;
       }
-    });
+    }
 
-    // 畫面尺寸調整
+    // 綁定虛擬按鈕事件
+    document.getElementById('btn-left').onclick = moveLeft;
+    document.getElementById('btn-right').onclick = moveRight;
+    document.getElementById('btn-jump').onclick = jump;
+
+    // 畫面尺寸適應
     window.addEventListener('resize', () => {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(window.innerWidth, window.innerHeight);
     });
 
-    // 遊戲主循環
+    // 7. 遊戲主循環
     function animate() {
       requestAnimationFrame(animate);
 
       if (!isGameOver) {
-        // 跳躍物理邏輯
+        // 平滑移動至當前跑道 (Lerp)
+        player.position.x += (LANES[currentLane] - player.position.x) * 0.2;
+
+        // 跳躍物理
         if (isJumping) {
           player.position.y += jumpVelocity;
-          jumpVelocity -= 0.01; // 重力效果
+          jumpVelocity -= 0.012;
           if (player.position.y <= 0.5) {
             player.position.y = 0.5;
             isJumping = false;
           }
         }
 
-        // 障礙物向玩家移動
-        obstacle.position.z += 0.12;
-        if (obstacle.position.z > 4) {
-          obstacle.position.z = -15;
-          score++;
-          document.getElementById('score').innerText = score;
+        // 處理障礙物
+        for (let i = obstacles.length - 1; i >= 0; i--) {
+          const obs = obstacles[i];
+          obs.position.z += 0.2; // 移動速度
+
+          // 碰撞檢測 (玩家與障礙物)
+          if (player.position.distanceTo(obs.position) < 0.9) {
+            isGameOver = true;
+            alert(`💥 遊戲結束！\n得分: ${score}\n獲得金幣: ${coinCount}`);
+            location.reload(); // 重新整理網頁
+          }
+
+          // 超出畫面移除
+          if (obs.position.z > 8) {
+            scene.remove(obs);
+            obstacles.splice(i, 1);
+            score += 10;
+            document.getElementById('score').innerText = score;
+          }
         }
 
-        // 碰撞偵測 (距離小於 0.8 算撞到)
-        if (player.position.distanceTo(obstacle.position) < 0.8) {
-          isGameOver = true;
-          alert(`遊戲結束！最終得分：${score}\n點擊螢幕重新開始`);
+        // 處理金幣
+        for (let i = coins.length - 1; i >= 0; i--) {
+          const c = coins[i];
+          c.position.z += 0.2;
+          c.rotation.y += 0.05; // 金幣自轉
+
+          // 吃到金幣檢測
+          if (player.position.distanceTo(c.position) < 1.0) {
+            scene.remove(c);
+            coins.splice(i, 1);
+            coinCount += 1;
+            score += 50;
+            document.getElementById('coins').innerText = coinCount;
+            document.getElementById('score').innerText = score;
+          } else if (c.position.z > 8) {
+            scene.remove(c);
+            coins.splice(i, 1);
+          }
         }
       }
 
