@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
-  <title>3D 跑酷冒險</title>
+  <title>3D 跑酷冒險 - 動態鏡頭版</title>
   <style>
     body { margin: 0; overflow: hidden; background: #0f172a; touch-action: manipulation; font-family: sans-serif; }
     #ui { position: absolute; top: 15px; left: 0; width: 100%; text-align: center; color: white; pointer-events: none; z-index: 10; }
@@ -41,11 +41,13 @@
     // 1. 場景設定
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0f172a);
-    scene.fog = new THREE.Fog(0x0f172a, 10, 30); // 霧化效果增強 3D 深度感
+    scene.fog = new THREE.Fog(0x0f172a, 10, 30);
 
     const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
-    camera.position.set(0, 4, 8);
-    camera.lookAt(0, 1, 0);
+    
+    // 鏡頭初始位置基準點
+    const baseCamOffset = { x: 0, y: 3.5, z: 8 };
+    camera.position.set(baseCamOffset.x, baseCamOffset.y, baseCamOffset.z);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -57,9 +59,9 @@
     scene.add(light);
     scene.add(new THREE.AmbientLight(0xffffff, 0.6));
 
-    // 3. 跑道 (三個跑道 X 軸分別為 -2.5, 0, 2.5)
+    // 3. 跑道
     const LANES = [-2.5, 0, 2.5];
-    let currentLane = 1; // 預設在中間跑道
+    let currentLane = 1;
 
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(10, 50),
@@ -86,7 +88,6 @@
       const isCoin = Math.random() > 0.5;
 
       if (isCoin) {
-        // 生成金幣
         const coin = new THREE.Mesh(
           new THREE.OctahedronGeometry(0.4),
           new THREE.MeshStandardMaterial({ color: 0xfacc15, metalness: 0.8 })
@@ -95,7 +96,6 @@
         scene.add(coin);
         coins.push(coin);
       } else {
-        // 生成障礙物
         const obstacle = new THREE.Mesh(
           new THREE.BoxGeometry(1.2, 1.2, 1.2),
           new THREE.MeshStandardMaterial({ color: 0xf43f5e })
@@ -106,7 +106,6 @@
       }
     }
 
-    // 每 1.2 秒生成一個物件
     setInterval(spawnEntity, 1200);
 
     // 遊戲狀態
@@ -117,12 +116,8 @@
     let isGameOver = false;
 
     // 6. 操作邏輯
-    function moveLeft() {
-      if (currentLane > 0) currentLane--;
-    }
-    function moveRight() {
-      if (currentLane < 2) currentLane++;
-    }
+    function moveLeft() { if (currentLane > 0) currentLane--; }
+    function moveRight() { if (currentLane < 2) currentLane++; }
     function jump() {
       if (!isJumping) {
         isJumping = true;
@@ -130,12 +125,10 @@
       }
     }
 
-    // 綁定虛擬按鈕事件
     document.getElementById('btn-left').onclick = moveLeft;
     document.getElementById('btn-right').onclick = moveRight;
     document.getElementById('btn-jump').onclick = jump;
 
-    // 畫面尺寸適應
     window.addEventListener('resize', () => {
       camera.aspect = window.innerWidth / window.innerHeight;
       camera.updateProjectionMatrix();
@@ -147,7 +140,7 @@
       requestAnimationFrame(animate);
 
       if (!isGameOver) {
-        // 平滑移動至當前跑道 (Lerp)
+        // 玩家位置平滑更新 (Lerp)
         player.position.x += (LANES[currentLane] - player.position.x) * 0.2;
 
         // 跳躍物理
@@ -160,19 +153,41 @@
           }
         }
 
+        // ==========================================
+        // 🎥 方案 A：動態跟隨鏡頭運鏡邏輯
+        // ==========================================
+        
+        // 1. 鏡頭 X 軸延遲跟隨（只移動角色的 60%，產生側滑感）
+        const targetCamX = player.position.x * 0.6;
+        
+        // 2. 跳躍時鏡頭跟著微幅升高
+        const targetCamY = baseCamOffset.y + (player.position.y - 0.5) * 0.3;
+        
+        // 3. 鏡頭位置平滑內插 (Lerp)
+        camera.position.x += (targetCamX - camera.position.x) * 0.1;
+        camera.position.y += (targetCamY - camera.position.y) * 0.1;
+
+        // 4. 側移動時產生微幅傾斜角度（Z 軸旋轉）
+        const sideVelocity = LANES[currentLane] - player.position.x;
+        const targetRollAngle = -sideVelocity * 0.05; // 傾斜幅度
+        camera.rotation.z += (targetRollAngle - camera.rotation.z) * 0.1;
+
+        // 5. 焦點始終注視著玩家前方一點點的位置
+        camera.lookAt(player.position.x * 0.3, player.position.y + 0.3, 0);
+
+        // ==========================================
+
         // 處理障礙物
         for (let i = obstacles.length - 1; i >= 0; i--) {
           const obs = obstacles[i];
-          obs.position.z += 0.2; // 移動速度
+          obs.position.z += 0.2;
 
-          // 碰撞檢測 (玩家與障礙物)
           if (player.position.distanceTo(obs.position) < 0.9) {
             isGameOver = true;
             alert(`💥 遊戲結束！\n得分: ${score}\n獲得金幣: ${coinCount}`);
-            location.reload(); // 重新整理網頁
+            location.reload();
           }
 
-          // 超出畫面移除
           if (obs.position.z > 8) {
             scene.remove(obs);
             obstacles.splice(i, 1);
@@ -185,9 +200,8 @@
         for (let i = coins.length - 1; i >= 0; i--) {
           const c = coins[i];
           c.position.z += 0.2;
-          c.rotation.y += 0.05; // 金幣自轉
+          c.rotation.y += 0.05;
 
-          // 吃到金幣檢測
           if (player.position.distanceTo(c.position) < 1.0) {
             scene.remove(c);
             coins.splice(i, 1);
@@ -208,4 +222,5 @@
     animate();
   </script>
 </body>
-</html>
+  </html>
+  
